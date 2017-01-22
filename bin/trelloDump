@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+
+import toml
+from trello_connect import TrelloConnect
+import os
+import sys
+import argparse
+from datetime import datetime, timedelta
+
+def print_action(action, card):
+    """
+    Formats a prints a given action
+    """
+    clist = []
+    try:
+        if action["type"] == "commentCard":
+
+            clist.append("~~~Item updated:~~~")
+            clist.append("\t\tDate: {}".format(action["date"]))
+            clist.append("\t\t{}".format(action["data"]["text"]))
+        elif action["type"] == "createCard":
+
+            clist.append("~~~Item created:~~~")
+            clist.append("\t\tDate: {}".format(action["date"]))
+            clist.append("\t\tFiled under: {}".format(action["data"]["list"]["name"]))
+            #print("\t\tComments: \n\t\t", from_card["desc"])
+        elif action["display"]["translationKey"] == "action_move_card_from_list_to_list":
+            if action["data"]["listAfter"]["name"] == "Done":
+
+                clist.append("~~~Item Marked as finished:~~~")
+                clist.append("\t\tDate: {}".format(action["date"]))
+                clist.append("\t\tDone: {}".format(action["data"]["card"]["name"]))
+    except KeyError as ke:
+        print("Error: ", ke)
+        print(action)
+        sys.exit(1)
+
+    return clist
+
+def is_recent_action(action, time_range):
+    """
+    checks to see if an action is within a given time range
+    """
+    time_now = datetime.now()
+    action_time = datetime.strptime(action["date"], "%Y-%m-%dT%H:%M:%S.%fZ")
+    time_diff = time_now - action_time
+    if time_diff < timedelta(days=time_range):
+        return True
+    else:
+        return False
+
+
+def is_recent(card, time_range):
+    """
+    Checks to see if a card has recent changes in its actions
+    """
+    time_now = datetime.now()
+    for action in card["actions"]:
+        if is_recent_action(action, time_range):
+            return True
+    return False
+
+
+def print_recent_changes(cards, time_range):
+    """
+    Creates and prints the list of all changes
+    """
+    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+    print("Changes in the past {} days:".format(time_range))
+    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+
+
+    new_change_list = []
+    time_now = datetime.now()
+    for card in cards:
+        actions = card["actions"]
+        clist = []
+        starting_list = ""
+        for action in actions:
+            #We grab the list name from create so we have a better name for "filed under"
+            if action["type"] == "createCard":
+                starting_list = action["data"]["list"]["name"]
+            if is_recent_action(action, time_range):
+                clist = clist + print_action(action, card)
+
+        #print if there are change items we care about
+        if len(clist) != 0:
+            print("\n")
+            if starting_list == "":
+                starting_list = card["list"]["name"]
+            print("============Item: {}, filed under {}".format(card["name"], starting_list))
+            print("\n".join(clist))
+
+
+def gather_list(to_print, client, new_date):
+    """
+    Get by-card info from a list of lists
+    """
+    lname = to_print["name"]
+    clist = to_print["cards"]
+    cardlist = []
+    card_change_list =[]
+    for card in clist:
+        card_data = client.get_full_card_info(card["id"])
+        cardlist.append(card_data)
+        if is_recent(card_data, new_date):
+            card_change_list.append(card_data)
+
+    #first we get the list of recent changes.
+    #print_recent_changes(cardlist, 7)
+    return cardlist, card_change_list
+
+def dump_cards(auth, board):
+    """
+    Entry into the card printing function
+    This relies on the API returning a full list of actions/history
+    """
+    client = TrelloConnect(auth["token"], auth["key"])
+    lists = client.get_lists(board)
+    new_date = 7
+    #Gather entire cards across the board
+    cardlist = []
+    changelist = []
+    for blist in lists:
+        crd = client.get_cards(blist["id"])
+        clist, changes = gather_list(crd, client, new_date)
+        cardlist = cardlist + clist
+        changelist = changelist + changes
+
+    #We print the recent changes at the top.
+    print_recent_changes(changelist, new_date)
+
+def get_settings():
+    """
+    Dump the settings from the toml file
+    """
+    homedir = os.path.expanduser("~")
+    with open(homedir + "/.trello") as cfg:
+        config = toml.loads(cfg.read())
+    return config["auth"]
+
+def main():
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-b", "--board",
+                    help="name of the board to dump to the screen",
+                    type=str,
+                    default = "Work")
+    args = parser.parse_args()
+    #Start by reading in settings.
+    auth = get_settings()
+    dump_cards(auth, args.board)
+
+if __name__ == '__main__':
+    main()
