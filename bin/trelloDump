@@ -2,15 +2,15 @@
 """
 A CLI tool that dumps recent changes from a Trello board
 """
-from trello_connect import TrelloConnect
 
+from trello_connect import TrelloConnect
+from datetime import datetime, timedelta
 import toml
 import os
 import sys
 import argparse
-from datetime import datetime, timedelta
 
-def print_action(action):
+def print_action(action, done_name):
     """
     Formats a given action,
     returns a list of formatted items to be printed by another function
@@ -29,7 +29,7 @@ def print_action(action):
             clist.append("\t\tFiled under: {}".format(action["data"]["list"]["name"]))
             #print("\t\tComments: \n\t\t", from_card["desc"])
         elif display_key == "action_move_card_from_list_to_list":
-            if action["data"]["listAfter"]["name"] == "Done":
+            if action["data"]["listAfter"]["name"] == done_name:
 
                 clist.append("~~~Item Marked as finished:~~~")
                 clist.append("\t\tDate: {}".format(action["date"]))
@@ -50,7 +50,7 @@ def date_is_recent(date_str, time_range):
     time_diff = time_now - action_time
     return bool(time_diff < timedelta(days=time_range))
 
-def print_recent_changes(cards, time_range):
+def print_recent_changes(cards, time_range, done_name):
     """
     Creates and prints the list of all changes
     Checks the date on every action, prints and formats actions in that time range
@@ -68,7 +68,7 @@ def print_recent_changes(cards, time_range):
             if action["type"] == "createCard":
                 starting_list = action["data"]["list"]["name"]
             if date_is_recent(action["date"], time_range):
-                clist = clist + print_action(action)
+                clist = clist + print_action(action, done_name)
 
         #if print_action returned some items, print header, then print list
         if len(clist) != 0:
@@ -94,14 +94,15 @@ def gather_list(to_print, client, new_date):
     #first we get the list of recent changes.
     return card_change_list
 
-def dump_cards(auth, board, verbose):
+def dump_cards(cfg, board, verbose):
     """
     Entry into the card printing function
     This relies on the API returning a full list of actions/history
     """
+    auth = cfg["auth"]
     client = TrelloConnect(auth["token"], auth["key"], verbose)
     lists = client.get_lists(board)
-    new_date = 7
+    new_date = cfg["date_range"]
     #Gather entire cards across the board
     changelist = []
     for blist in lists:
@@ -110,7 +111,7 @@ def dump_cards(auth, board, verbose):
         changelist = changelist + changes
 
     #We print the recent changes at the top.
-    print_recent_changes(changelist, new_date)
+    print_recent_changes(changelist, new_date, cfg["done_name"])
 
 def get_settings():
     """
@@ -124,7 +125,23 @@ def get_settings():
         print("{}".format(ioerr))
         print("No API key file has been found. Create one as ~/.trello")
         sys.exit(1)
-    return config["auth"]
+
+    if "key" not in config["auth"] or "token" not in config["auth"]:
+        print("Your config is missing a API key or token.")
+        sys.exit(1)
+
+    if "date_range" in config:
+        if not isinstance(config["date_range"], int):
+            print("date_range is not an int.")
+            sys.exit(1)
+    else:
+        config["date_range"] = 7
+
+    if "done_name" not in config:
+        config["done_name"] = "Done"
+
+
+    return config
 
 def main():
     """

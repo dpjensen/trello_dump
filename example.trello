@@ -1,3 +1,5 @@
+date_range = 7
+done_name = "Done"
 [auth]
 key = "XXXXX"
 token = "XXXXXX"
